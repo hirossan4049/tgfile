@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from math import ceil
 from pathlib import Path
-from urllib.parse import unquote
+from subprocess import run
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -79,7 +79,7 @@ def split_file(input_file, out, target_size=None, start=0, chunk_copy_size=1024*
 
 
 class GFile:
-    def __init__(self, uri, progress=False, thread_num=4, chunk_size=1024*1024*10, chunk_copy_size=1024*1024, timeout=10, **kwargs) -> None:
+    def __init__(self, uri, progress=False, thread_num=4, chunk_size=1024*1024*10, chunk_copy_size=1024*1024, timeout=10, aria2=False, **kwargs) -> None:
         self.uri = uri
         self.chunk_size = size_str_to_bytes(chunk_size)
         self.chunk_copy_size = size_str_to_bytes(chunk_copy_size)
@@ -92,6 +92,7 @@ class GFile:
         self.session.request = functools.partial(self.session.request, timeout=self.timeout)
         self.cookies = None
         self.current_chunk = 0
+        self.aria2 = aria2
 
 
     def upload_chunk(self, chunk_no, chunks):
@@ -221,20 +222,22 @@ class GFile:
         if not m:
             print('Invalid URL.')
             return
-        self.session.get(self.uri) # setup cookie
+        r = self.session.get(self.uri) # setup cookie
+        if not filename:
+            filename = re.search(r'<p id="dl".+?>(.+?)</p>', r.text, re.DOTALL)[1].strip()
+            filename = re.sub(r'[\\/:*?"<>|]', '_', filename) # only sanitize remotely provided filename. User provided ones are on thier own.
         file_id = m[1]
         download_url = self.uri.replace(file_id, 'download.php?file=' + file_id)
+        if self.aria2:
+            cookie_str = "; ".join([f"{cookie.name}={cookie.value}" for cookie in self.session.cookies])
+            cmd = ['aria2c', download_url, '--header', f'Cookie: {cookie_str}', '-o', filename]
+            cmd.extend(self.aria2.split(' '))
+            run(cmd)
+            return
+
         with self.session.get(download_url, stream=True) as r:
             r.raise_for_status()
             filesize = int(r.headers['Content-Length'])
-            if not filename:
-                filename = 'gigafile_noname.bin' # temp name
-                content_disp = r.headers['Content-Disposition']
-                if "UTF-8''" in content_disp:
-                    filename = unquote(content_disp.split("UTF-8''")[-1])
-                else:
-                    filename = re.search(r'filename="(.+?)";', content_disp)[1].encode('iso8859-1','ignore').decode('utf-8', 'ignore')
-                filename = re.sub(r'[\\/:*?"<>|]', '_', filename) # only sanitize remote filename. User provided ones are on users' own.
             if self.progress:
                 desc = filename if len(filename) <= 20 else filename[0:11] + '..' + filename[-7:]
                 self.pbar = tqdm(total=filesize, unit='B', unit_scale=True, unit_divisor=1024, desc=desc)
