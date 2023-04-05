@@ -6,11 +6,12 @@ import re
 import time
 import uuid
 from datetime import datetime
-from math import ceil
+from os import rename
 from pathlib import Path
 from subprocess import run
 
 import requests
+from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from requests_toolbelt import MultipartEncoder, StreamingIterator
 from tqdm import tqdm
@@ -165,7 +166,7 @@ class GFile:
         self.failed = False
         assert Path(self.uri).exists()
         size = Path(self.uri).stat().st_size
-        chunks = ceil(size / self.chunk_size)
+        chunks = math.ceil(size / self.chunk_size)
         print(f'Filesize {bytes_to_size_str(size)}, chunk size: {bytes_to_size_str(self.chunk_size)}, total chunks: {chunks}')
 
         if self.progress:
@@ -223,11 +224,29 @@ class GFile:
             print('Invalid URL.')
             return
         r = self.session.get(self.uri) # setup cookie
+        try:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            if soup.select_one('#contents_matomete'):
+                print('Matomete mode. Getting info of first file (currently only support one file)...')
+                ele = soup.select_one('.matomete_file')
+                web_name = ele.select_one('.matomete_file_info > span:nth-child(2)').text.strip()
+                file_id = re.search(r'download\(\d+, *\'(.+?)\'', ele.select_one('.download_panel_btn_dl')['onclick'])[1]
+                size_str = re.search(r'（(.+?)）', ele.select_one('.matomete_file_info > span:nth-child(3)').text.strip())[1]
+            else:
+                file_id = m[1]
+                size_str = soup.select_one('.dl_size').text.strip()
+                web_name = soup.select_one('#dl').text.strip()
+
+            print(f'Name: {web_name}, size: {size_str}, id: {file_id}')
+        except Exception as ex:
+            print(f'ERROR! Failed to parse the page {self.uri}.')
+            print(ex)
+            print('Please report it back to the developer.')
+
         if not filename:
-            filename = re.search(r'<p id="dl".+?>(.+?)</p>', r.text, re.DOTALL)[1].strip()
-            filename = re.sub(r'[\\/:*?"<>|]', '_', filename) # only sanitize remotely provided filename. User provided ones are on thier own.
-        file_id = m[1]
-        download_url = self.uri.replace(file_id, 'download.php?file=' + file_id)
+            # only sanitize web filename. User provided ones are on their own.
+            filename = re.sub(r'[\\/:*?"<>|]', '_', web_name)
+        download_url = self.uri.rsplit('/', 1)[0] + '/download.php?file=' + file_id
         if self.aria2:
             cookie_str = "; ".join([f"{cookie.name}={cookie.value}" for cookie in self.session.cookies])
             cmd = ['aria2c', download_url, '--header', f'Cookie: {cookie_str}', '-o', filename]
@@ -235,18 +254,25 @@ class GFile:
             run(cmd)
             return
 
+        temp = filename + '.dl'
+
         with self.session.get(download_url, stream=True) as r:
             r.raise_for_status()
             filesize = int(r.headers['Content-Length'])
             if self.progress:
                 desc = filename if len(filename) <= 20 else filename[0:11] + '..' + filename[-7:]
                 self.pbar = tqdm(total=filesize, unit='B', unit_scale=True, unit_divisor=1024, desc=desc)
-            with open(filename, 'wb') as f:
+            with open(temp, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=self.chunk_copy_size):
                     f.write(chunk)
                     if self.pbar: self.pbar.update(len(chunk))
         if self.pbar: self.pbar.close()
 
-        filesize_downloaded = Path(filename).stat().st_size
-        print(f'Filesize check: expected: {filesize}; actual: {filesize_downloaded}. {"Succeeded." if filesize==filesize_downloaded else "Failed!"}')
+        filesize_downloaded = Path(temp).stat().st_size
+        print(f'Filesize check: expected: {filesize}; actual: {filesize_downloaded}')
+        if filesize == filesize_downloaded:
+            print("Succeeded.")
+            rename(temp, filename)
+        else:
+            print(f"Downloaded file is corrupt. Please check the broken file at {temp} and delete it yourself if needed.")
         return filename
