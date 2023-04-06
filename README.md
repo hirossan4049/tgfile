@@ -4,7 +4,7 @@
 
 A python CLI/module to download and upload from [gigafile](https://gigafile.nu/).
 
-Note: PyPI package name is `gigafile` since `gfile` isn't available. Both CLI and module name are still `gfile`.
+Note: PyPI package name is `gigafile` since `gfile` wasn't available. Both CLI and module names are still `gfile`.
 
 A major update from [the original](https://github.com/Sraq-Zit/gfile). Highlights:
 
