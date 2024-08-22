@@ -80,7 +80,7 @@ def split_file(input_file, out, target_size=None, start=0, chunk_copy_size=1024*
 
 
 class GFile:
-    def __init__(self, uri, progress=False, thread_num=4, chunk_size=1024*1024*10, chunk_copy_size=1024*1024, timeout=10, aria2=False, **kwargs) -> None:
+    def __init__(self, uri, progress=False, thread_num=4, chunk_size=1024*1024*10, chunk_copy_size=1024*1024, timeout=10, aria2=False, key=None, **kwargs) -> None:
         self.uri = uri
         self.chunk_size = size_str_to_bytes(chunk_size)
         self.chunk_copy_size = size_str_to_bytes(chunk_copy_size)
@@ -94,6 +94,7 @@ class GFile:
         self.cookies = None
         self.current_chunk = 0
         self.aria2 = aria2
+        self.key = key
 
 
     def upload_chunk(self, chunk_no, chunks):
@@ -247,6 +248,8 @@ class GFile:
             # only sanitize web filename. User provided ones are on their own.
             filename = re.sub(r'[\\/:*?"<>|]', '_', web_name)
         download_url = self.uri.rsplit('/', 1)[0] + '/download.php?file=' + file_id
+        if self.key:
+            download_url += f'&dlkey={self.key}'
         if self.aria2:
             cookie_str = "; ".join([f"{cookie.name}={cookie.value}" for cookie in self.session.cookies])
             cmd = ['aria2c', download_url, '--header', f'Cookie: {cookie_str}', '-o', filename]
