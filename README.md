@@ -26,7 +26,7 @@ $ gfile upload path/to/file
 $ gfile download https://66.gigafile.nu/0320-b36ec21d4a56b143537e12df7388a5367
 
 $ gfile -h
-usage: Gfile [-h] [-p] [-o OUTPUT] [--aria2 [ARIA2]] [-n THREAD_NUM] [-s CHUNK_SIZE] [-m CHUNK_COPY_SIZE] [-t TIMEOUT] {download,upload} uri
+usage: Gfile [-h] [-p] [-o OUTPUT] [--aria2 [ARIA2]] [-n THREAD_NUM] [-s CHUNK_SIZE] [-m CHUNK_COPY_SIZE] [-t TIMEOUT] [-k KEY] {download,upload} uri
 
 positional arguments:
   {download,upload}     upload or download
@@ -46,6 +46,8 @@ options:
                         specifies size to copy the main file into pieces [default: 1MB]
   -t TIMEOUT, --timeout TIMEOUT
                         specifies timeout time (in seconds) [default: 10]
+  -k KEY, --key KEY, --password KEY
+                        specifies the key/password for the file
 ```
 
 ### Module
