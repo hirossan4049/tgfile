@@ -19,18 +19,19 @@ from urllib3.util.retry import Retry
 
 
 def bytes_to_size_str(bytes):
-   if bytes == 0:
-       return "0B"
-   units = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
-   i = int(math.floor(math.log(bytes, 1024)))
-   p = math.pow(1024, i)
-   return f"{bytes/p:.02f} {units[i]}"
+    if bytes == 0:
+        return "0B"
+    units = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+    i = int(math.floor(math.log(bytes, 1024)))
+    p = math.pow(1024, i)
+    return f"{bytes/p:.02f} {units[i]}"
 
 
 def size_str_to_bytes(size_str):
     if isinstance(size_str, int):
         return size_str
-    m = re.search(r'^(?P<num>\d+) ?((?P<unit>[KMGTPEZY]?)(iB|B)?)$', size_str, re.IGNORECASE)
+    m = re.search(
+        r'^(?P<num>\d+) ?((?P<unit>[KMGTPEZY]?)(iB|B)?)$', size_str, re.IGNORECASE)
     assert m
     units = ("B", "K", "M", "G", "T", "P", "E", "Z", "Y")
     unit = (m['unit'] or 'B').upper()
@@ -40,7 +41,7 @@ def size_str_to_bytes(size_str):
 def requests_retry_session(
     retries=5,
     backoff_factor=0.2,
-    status_forcelist=None, # (500, 502, 504)
+    status_forcelist=None,  # (500, 502, 504)
     session=None,
 ):
     session = session or requests.Session()
@@ -63,44 +64,59 @@ def split_file(input_file, out, target_size=None, start=0, chunk_copy_size=1024*
     if target_size is None:
         output_size = input_size - start
     else:
-        output_size = min( target_size, input_size - start)
+        output_size = min(target_size, input_size - start)
 
     with open(input_file, 'rb') as f:
         f.seek(start)
         while True:
             # print(f'{size / output_size * 100:.2f}%', end='\r')
-            if size == output_size: break
+            if size == output_size:
+                break
             if size > output_size:
                 raise Exception(f'Size ({size}) is larger than {target_size} bytes!')
             current_chunk_size = min(chunk_copy_size, output_size - size)
             chunk = f.read(current_chunk_size)
-            if not chunk: break
+            if not chunk:
+                break
             size += len(chunk)
             out.write(chunk)
 
 
 class GFile:
-    def __init__(self, uri, progress=False, thread_num=4, chunk_size=1024*1024*10, chunk_copy_size=1024*1024, timeout=10, aria2=False, key=None, **kwargs) -> None:
+    def __init__(self, uri, progress=False, thread_num=4, chunk_size=1024*1024*10, chunk_copy_size=1024*1024, timeout=10, aria2=False, key=None, proxy=None, tor=False, **kwargs) -> None:
         self.uri = uri
         self.chunk_size = size_str_to_bytes(chunk_size)
         self.chunk_copy_size = size_str_to_bytes(chunk_copy_size)
-        self.thread_num=thread_num
+        self.thread_num = thread_num
         self.progress = progress
         self.data = None
         self.pbar = None
         self.timeout = timeout
         self.session = requests_retry_session()
-        self.session.request = functools.partial(self.session.request, timeout=self.timeout)
+        self.session.request = functools.partial(
+            self.session.request, timeout=self.timeout)
+        if tor:
+            print("currentIP", self.session.get("https://ip.me").text)
+            self.session.proxies.update({
+                'http': 'socks5://localhost:9050',
+                'https': 'socks5://localhost:9050',
+            })
+            print("TOR", self.session.get("https://ip.me").text)
+        elif proxy:
+            self.session.proxies.update({
+                'http': proxy,
+                'https': proxy,
+            })
         self.cookies = None
         self.current_chunk = 0
         self.aria2 = aria2
         self.key = key
 
-
     def upload_chunk(self, chunk_no, chunks):
         bar = self.pbar[chunk_no % self.thread_num] if self.pbar else None
         with io.BytesIO() as f:
-            split_file(self.uri, f, self.chunk_size, start=chunk_no * self.chunk_size, chunk_copy_size=self.chunk_copy_size)
+            split_file(self.uri, f, self.chunk_size, start=chunk_no *
+                       self.chunk_size, chunk_copy_size=self.chunk_copy_size)
             chunk_size = f.tell()
             f.seek(0)
             fields = {
@@ -144,7 +160,8 @@ class GFile:
         while True:
             try:
                 streamer = StreamingIterator(size, gen())
-                resp = self.session.post(f"https://{self.server}/upload_chunk.php", data=streamer, headers=headers)
+                resp = self.session.post(
+                    f"https://{self.server}/upload_chunk.php", data=streamer, headers=headers)
             except Exception as ex:
                 print(ex)
                 print('Retrying...')
@@ -160,7 +177,6 @@ class GFile:
             print(resp_data)
             self.failed = True
 
-
     def upload(self):
         self.token = uuid.uuid1().hex
         self.pbar = None
@@ -173,16 +189,19 @@ class GFile:
         if self.progress:
             self.pbar = []
             for i in range(self.thread_num):
-                self.pbar.append(tqdm(total=size, unit="B", unit_scale=True, leave=False, unit_divisor=1024, ncols=100, position=i))
+                self.pbar.append(tqdm(total=size, unit="B", unit_scale=True,
+                                 leave=False, unit_divisor=1024, ncols=100, position=i))
 
-        self.server = re.search(r'var server = "(.+?)"', self.session.get('https://gigafile.nu/').text)[1]
+        self.server = re.search(r'var server = "(.+?)"',
+                                self.session.get('https://gigafile.nu/').text)[1]
 
         # upload the first chunk to set cookies properly.
         self.upload_chunk(0, chunks)
 
         # upload second to second last chunk(s)
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.thread_num) as ex:
-            futures = {ex.submit(self.upload_chunk, i, chunks): i for i in range(1, chunks)}
+            futures = {ex.submit(self.upload_chunk, i, chunks)
+                                 : i for i in range(1, chunks)}
             try:
                 for future in concurrent.futures.as_completed(futures):
                     if self.failed:
@@ -207,8 +226,7 @@ class GFile:
         print('')
         if 'url' not in self.data:
             print('Something went wrong. Upload failed.', self.data)
-        return self # for chain
-
+        return self  # for chain
 
     def get_download_page(self):
         if not self.data or not 'url' in self.data:
@@ -218,21 +236,25 @@ class GFile:
         print(self.data['url'])
         return self.data['url']
 
-
     def download(self, filename=None):
-        m = re.search(r'^https?:\/\/\d+?\.gigafile\.nu\/([a-z0-9-]+)$', self.uri)
+        m = re.search(
+            r'^https?:\/\/\d+?\.gigafile\.nu\/([a-z0-9-]+)$', self.uri)
         if not m:
             print('Invalid URL.')
             return
-        r = self.session.get(self.uri) # setup cookie
+        r = self.session.get(self.uri)  # setup cookie
         try:
             soup = BeautifulSoup(r.text, 'html.parser')
             if soup.select_one('#contents_matomete'):
-                print('Matomete mode. Getting info of first file (currently only support one file)...')
+                print(
+                    'Matomete mode. Getting info of first file (currently only support one file)...')
                 ele = soup.select_one('.matomete_file')
-                web_name = ele.select_one('.matomete_file_info > span:nth-child(2)').text.strip()
-                file_id = re.search(r'download\(\d+, *\'(.+?)\'', ele.select_one('.download_panel_btn_dl')['onclick'])[1]
-                size_str = re.search(r'（(.+?)）', ele.select_one('.matomete_file_info > span:nth-child(3)').text.strip())[1]
+                web_name = ele.select_one(
+                    '.matomete_file_info > span:nth-child(2)').text.strip()
+                file_id = re.search(
+                    r'download\(\d+, *\'(.+?)\'', ele.select_one('.download_panel_btn_dl')['onclick'])[1]
+                size_str = re.search(
+                    r'（(.+?)）', ele.select_one('.matomete_file_info > span:nth-child(3)').text.strip())[1]
             else:
                 file_id = m[1]
                 size_str = soup.select_one('.dl_size').text.strip()
@@ -247,12 +269,15 @@ class GFile:
         if not filename:
             # only sanitize web filename. User provided ones are on their own.
             filename = re.sub(r'[\\/:*?"<>|]', '_', web_name)
-        download_url = self.uri.rsplit('/', 1)[0] + '/download.php?file=' + file_id
+        download_url = self.uri.rsplit(
+            '/', 1)[0] + '/download.php?file=' + file_id
         if self.key:
             download_url += f'&dlkey={self.key}'
         if self.aria2:
-            cookie_str = "; ".join([f"{cookie.name}={cookie.value}" for cookie in self.session.cookies])
-            cmd = ['aria2c', download_url, '--header', f'Cookie: {cookie_str}', '-o', filename]
+            cookie_str = "; ".join(
+                [f"{cookie.name}={cookie.value}" for cookie in self.session.cookies])
+            cmd = ['aria2c', download_url, '--header',
+                   f'Cookie: {cookie_str}', '-o', filename]
             cmd.extend(self.aria2.split(' '))
             run(cmd)
             return
@@ -263,13 +288,17 @@ class GFile:
             r.raise_for_status()
             filesize = int(r.headers['Content-Length'])
             if self.progress:
-                desc = filename if len(filename) <= 20 else filename[0:11] + '..' + filename[-7:]
-                self.pbar = tqdm(total=filesize, unit='B', unit_scale=True, unit_divisor=1024, desc=desc)
+                desc = filename if len(
+                    filename) <= 20 else filename[0:11] + '..' + filename[-7:]
+                self.pbar = tqdm(total=filesize, unit='B',
+                                 unit_scale=True, unit_divisor=1024, desc=desc)
             with open(temp, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=self.chunk_copy_size):
                     f.write(chunk)
-                    if self.pbar: self.pbar.update(len(chunk))
-        if self.pbar: self.pbar.close()
+                    if self.pbar:
+                        self.pbar.update(len(chunk))
+        if self.pbar:
+            self.pbar.close()
 
         filesize_downloaded = Path(temp).stat().st_size
         print(f'Filesize check: expected: {filesize}; actual: {filesize_downloaded}')
